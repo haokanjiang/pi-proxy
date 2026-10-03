@@ -97,24 +97,65 @@ function resolveAction(url: string, config: ProxyConfig): Action {
 }
 
 // ─── Network Error Detection ────────────────────────────
-const NETWORK_ERRORS = [
+// Node (undici) puts the errno in `message`; Bun puts it in `code`
+// and throws generic messages like "Unable to connect. …".
+const NETWORK_ERROR_CODES = [
 	"ECONNREFUSED",
 	"ETIMEDOUT",
 	"ENOTFOUND",
 	"ENETUNREACH",
 	"ECONNRESET",
+	"ECONNABORTED",
 	"EHOSTUNREACH",
 	"EAI_AGAIN",
+	"EPIPE",
 	"UND_ERR_CONNECT_TIMEOUT",
+	"UND_ERR_SOCKET",
+	"ConnectionRefused",
+	"ConnectionTimedOut",
+	"ConnectionClosed",
+	"FailedToOpenSocket",
+];
+
+const NETWORK_ERROR_MESSAGES = [
 	"fetch failed",
+	"unable to connect",
+	"socket connection was closed",
+	"socket hang up",
+	"timed out",
+	"timeout",
+	"getaddrinfo",
+	"network is unreachable",
 ];
 
 function isNetworkError(err: unknown): boolean {
-	const msg = err instanceof Error ? err.message : String(err);
-	return NETWORK_ERRORS.some((code) => msg.includes(code));
+	const parts: string[] = [];
+	if (err instanceof Error) parts.push(err.message);
+	if (err && typeof err === "object") {
+		if ("code" in err && typeof err.code === "string") parts.push(err.code);
+		const cause = "cause" in err ? err.cause : undefined;
+		if (cause instanceof Error) parts.push(cause.message);
+		if (cause && typeof cause === "object" && "code" in cause && typeof cause.code === "string") {
+			parts.push(cause.code);
+		}
+	}
+	if (typeof err === "string") parts.push(err);
+	const probe = parts.join(" | ");
+	const lower = probe.toLowerCase();
+	return (
+		NETWORK_ERROR_CODES.some((token) => probe.includes(token)) ||
+		NETWORK_ERROR_MESSAGES.some((token) => lower.includes(token))
+	);
 }
 
 // ─── Proxy Agent ────────────────────────────────────────
+const processVersions: unknown = typeof process === "undefined" ? undefined : process.versions;
+const isBun =
+	processVersions !== null &&
+	typeof processVersions === "object" &&
+	"bun" in processVersions &&
+	typeof processVersions.bun === "string";
+
 let proxyAgent: ProxyAgent | null = null;
 let currentProxyUrl = "";
 
@@ -124,6 +165,24 @@ function getProxyAgent(proxyUrl: string): ProxyAgent {
 		currentProxyUrl = proxyUrl;
 	}
 	return proxyAgent;
+}
+
+/**
+ * Build the fetch init that routes a request through `proxyUrl`.
+ *
+ * Node's global fetch (undici) honours `dispatcher`; Bun's fetch ignores it
+ * entirely and uses its own `proxy` option instead.
+ */
+function proxiedInit(init: RequestInit | undefined, proxyUrl: string): RequestInit {
+	if (isBun) {
+		// @ts-ignore Bun fetch `proxy` option
+		return { ...init, proxy: proxyUrl };
+	}
+	return {
+		...init,
+		// @ts-ignore undici dispatcher
+		dispatcher: getProxyAgent(proxyUrl),
+	};
 }
 
 // ─── Stats ──────────────────────────────────────────────
@@ -156,11 +215,7 @@ export default function (pi: ExtensionAPI) {
 
 		if (action === "proxy") {
 			stats.proxy++;
-			return originalFetch(input, {
-				...init,
-				// @ts-ignore undici dispatcher
-				dispatcher: getProxyAgent(config.proxy),
-			});
+			return originalFetch(input, proxiedInit(init, config.proxy));
 		}
 
 		// fallback: 先直连，失败走代理
@@ -170,11 +225,7 @@ export default function (pi: ExtensionAPI) {
 		} catch (err) {
 			if (!isNetworkError(err)) throw err;
 			stats.fallbackHit++;
-			return originalFetch(input, {
-				...init,
-				// @ts-ignore undici dispatcher
-				dispatcher: getProxyAgent(config.proxy),
-			});
+			return originalFetch(input, proxiedInit(init, config.proxy));
 		}
 	};
 

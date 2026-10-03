@@ -3,11 +3,17 @@
   "version": "1.0.0",
   "description": "Smart proxy routing extension for pi - rule-based direct/proxy/fallback per domain",
   "keywords": ["pi-package"],
+  "type": "module",
   "author": "haokanjiang",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/haokanjiang/pi-proxy.git"
+  },
+  "scripts": {
+    "test": "node --test tests/proxy.test.mjs",
+    "test:node": "node --test tests/proxy.test.mjs",
+    "test:bun": "bun test tests/"
   },
   "pi": {
     "extensions": ["./index.ts"]

@@ -12,6 +12,8 @@ Monkey-patches `globalThis.fetch` to route requests based on domain rules:
 
 AI API calls (OpenAI, Anthropic, etc.) stay direct. Only web content fetching gets proxy fallback when network is unreachable.
 
+Routes through the proxy differently per runtime: Node uses undici's `dispatcher` (`ProxyAgent`), Bun uses its native `proxy` fetch option (Bun ignores `dispatcher`).
+
 ## Install
 
 ```bash
@@ -66,6 +68,16 @@ Menu options:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PI_PROXY_URL` | `http://127.0.0.1:7890` | Override proxy URL (takes precedence over config) |
+
+## Development
+
+```bash
+npm ci
+npm test          # node --test
+bun run test:bun  # bun test
+```
+
+The suite spawns the harness under both Node and Bun against a fake origin and a fake proxy (handles both forward and CONNECT forms), asserting per-rule routing, fallback and the disabled passthrough on each runtime.
 
 ## License
 
